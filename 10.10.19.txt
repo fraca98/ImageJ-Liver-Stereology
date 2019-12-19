@@ -1,0 +1,324 @@
+//SEMI-AUTOMATIC STEREOLOGY - 10.10.19
+
+waitForUser("Choose the Directory with T2 DICOM folder to create the required folders");
+array_folders=newArray("BlackGrid/","Measurements/","RedGrid/","ROI sequence/","T2-1/");		//Create an array that contains the name of the folders to create
+dir_folders=getDirectory("Choose the Directory with T2 DICOM folder to create the required folders"); 	//Select the directory
+
+list=getFileList(dir_folders); 										//Find the directory that contains the substring "T2" and rename it to "T2"
+for(i=0;i<list.length;i++){
+	if(indexOf(list[i],"T2")>=0){
+		dir_T2=dir_folders+list[i];
+		name=File.getName(dir_T2);
+		File.rename(dir_folders+list[i],dir_folders+"T2");					//Rename the folder that contains T2 DICOM images in "T2"
+		dir_T2=dir_folders+"T2";
+		
+	}
+}
+selectWindow("Log");
+run("Close");
+
+//CREATE FOLDERS
+for(l=0;l<array_folders.length;l++){
+	splitDir= dir_folders + array_folders[l];
+	File.makeDirectory(splitDir); 									//Create the new folders (names are contained in the previous array)
+}
+
+
+//SAVE ROI
+
+list=getFileList(dir_T2);										//Get the file list of T2 directory
+run("Image Sequence...","format=TIFF open=["+dir_T2+"]sort");						//Open T2 images as an "Image Sequence"
+run("Scale...", "x=2 y=2 z=1.0 width=512 height=512 interpolation=Bicubic average process create");	//Scale T2 image sequence (Bicubic interpolation)
+selectWindow("T2");
+run("Close");
+selectWindow("T2-1");
+
+//CREATE T2-1
+
+dir_T2_1=dir_folders+"T2-1/";
+run("Image Sequence... ","format=TIFF save=["+dir_T2_1+"]");						//open T2-1 images (T2 scaled images)
+
+//CREATE RED GRID
+
+rename("RedGrid");
+dir_red=dir_folders+"RedGrid/";										//Get the directory to save the RedGrid
+run("Grid ", "grid=Crosses area=64 color=Red random");							//Apply a grid to the T2-1 images (grid with red crosses). Area is setted on 64 mm^2
+run("Image Sequence... ","format=TIFF save=["+dir_red+"]");						//Save the RedGrid (images are saved from RedGrid0000)
+run("Close");	//saved from RedGrid0000
+
+//RENAME FILE RED GRID
+list=getFileList(dir_red);										//Get the images from RedGrid folder
+save_counter=1;
+for(i=0;i<list.length;i++){
+	if(i<9){
+		
+		File.rename(dir_red+list[i],dir_red+"RedGrid0"+save_counter+".tif");			//Rename RedGrid images, from RedGrid0000 to RedGrid0009, to RedGrid0X (range of X: 1-9)
+	}
+	else{
+		File.rename(dir_red+list[i],dir_red+"RedGrid"+save_counter+".tif");			//Rename RedGrid images, from RedGrid0009, to RedGridX (range of X: 10-99)
+	}
+	save_counter++;
+}
+selectWindow("Log");
+run("Close");
+
+
+//OPEN T2-1
+list=getFileList(dir_T2_1);						
+for(i=0;i<list.length;i++){										//Open each T2-1 image
+	file= dir_T2_1 + list[i];
+	open(file);
+}
+
+run("Images to Stack", "name=T2-1");									//Turns T2-1 images in a stack
+name = getTitle; 
+run("Stack ROIs");											//Run the plugin "Stack ROIs"
+waitForUser("Select the ROI of the liver and then press OK");
+run("ROI Manager...");
+path = getDirectory("image"); 										//Get the directory of the image
+list = getFileList(path);										//Get the file list of the previous directory
+n = nSlices; 
+//COUNT ROI SEQUENCE
+max_value=0;
+min_value=0;
+countermin=0;
+maxcount=0;
+
+for (i=1; i<=n; i++){
+	setSlice(i);
+	wait(20);
+	selectWindow(name);
+
+	if (selectionType()==-1) {									//if the slice hasn't a ROI
+		setSlice(i);
+		if(countermin>=1 && maxcount==0){							//the index of the last slice with a ROI is setted to max_value (from min_value,find the first 
+			max_value=i-1;									//index of a slice without the ROI: the previous ROI will be the last slice with a ROI)
+			maxcount++;
+			}
+	}
+	else{												//if the slice has a ROI
+		setSlice(i);
+		wait(20);
+		selectWindow(name);
+		roiManager("add");
+		if (countermin==0){									//the index of the first slice with a ROI is setted to min_value
+			min_value=i;
+			countermin++;
+			}
+
+		}
+
+}	
+
+//SAVE ROI SEQUENCE
+wait(100);
+dir_roi=dir_folders+"ROI sequence/";
+for (z=0; z<roiManager("count"); ++z) {
+    	roiManager("Select", z);
+		roiManager("rename", "BlackGrid" + "00" + min_value + z)
+		roiManager("save selected", dir_roi + "BlackGrid" + "00" + min_value + z + ".zip") 	//Save the ROI sequence as file zip as BlackGrid00X (X:index of the slice)
+}
+selectWindow("T2-1");
+run("Close");
+
+//OPEN RED GRID
+list=getFileList(dir_red);										//Get the images from the RedGrid folder
+for(i=0;i<list.length;i++){
+	file= dir_red + list[i];
+	open(file);											//Open each RedGrid image
+}
+run("Images to Stack", "name=RedGrid");									//Turn RedGrid images in a stack
+
+
+//SET IMAGE CHARACTERISTICS AND APPLY BLACK GRID
+run("To ROI Manager");
+roiManager("Set Color", "black");
+roiManager("Set Line Width", 0);
+length = roiManager("count");
+setSlice(length/2);											//Set in the middle of the slices to make the threshold 
+setAutoThreshold("Triangle");										//Make the auto-threshold(method=Triangle)
+run("Convert to Mask", "method=Triangle background=Light");						//Convert the result to a binary mask (0 is associated to White and 255 is associated to Black. Image in 8 bit)
+selectWindow("RedGrid");
+rename("BlackGrid");
+waitForUser("Close ROI Manager, press Save as Overlay and then press OK");
+dir_black=dir_folders+"BlackGrid/";									//Get the directory of the BlackGrid
+run("Image Sequence... ","format=TIFF save=["+dir_black+"]");						//Save the BlackGrid (images are saved from BlackGrid0000)
+selectWindow("BlackGrid");
+run("Close");	
+
+
+//RENAME FILE BLACK GRID
+list=getFileList(dir_black);										//Get the images from BlackGrid folder
+save_counter=1;
+for(i=0;i<list.length;i++){
+	if(i<9){
+		File.rename(dir_black+list[i],dir_black+"BlackGrid0"+save_counter+".tif");		//Rename RedGrid images, from BlackGrid0000 to RedGrid0009, to BlackGrid0X (range of X: 1-9)
+	}
+	else{
+		File.rename(dir_black+list[i],dir_black+"BlackGrid"+save_counter+".tif");		//Rename RedGrid images, from BlackGrid0009, to BlackGridX (range of X: 10-99)
+	}
+	save_counter++;
+}
+selectWindow("Log");
+run("Close");
+
+//OPEN BLACK GRID
+
+list=getFileList(dir_black);										//Get the images from BlackGrid folder
+for(i=0;i<list.length;i++){
+	file= dir_black + list[i];
+	open(file);											//Open each RedGrid image
+}
+run("Images to Stack", "name=BlackGrid");								//Turn RedGrid images in a stack
+
+
+
+//SEMIAUTOMATIC CROSSES SELECTION OF A USER-DEFINED ROI
+
+path = getDirectory("image"); 										//Get the directory of the image
+list = getFileList(path); 										//Get the file list of the previous directory (in list: index 0 --> BlackGrid01, index 1 --> BlackGrid02 ...)
+
+dir = dir_folders+"Measurements/"; 									//Get the directory of the measurements
+dir2 = dir_roi;
+roiManager("reset");
+
+for(i=min_value;i<=max_value;i++){ 
+	open(path+list[i-1]); 										//Open the slice
+	run("Set Measurements...", "mean min center stack redirect=None decimal=2");	
+	run("Set Scale...", "distance=0 known=0 pixel=1 unit=pixel");
+	run("ROI Manager...");
+	roiManager("Open", dir2 + "BlackGrid00" + i + ".zip");						//Open the ROI associated to the slice
+	roiManager("select", 0);									//Select the ROI
+	if (i <= 9) {
+	wait(100);
+		title5 = "BlackGrid0" + i + ".tif";
+		selectWindow(title5);
+		setAutoThreshold("Default");								//Make a threshold of the opened slice
+	} else {
+	wait(100);
+		title6 = "BlackGrid" + i + ".tif";
+		selectWindow(title6);
+		setAutoThreshold("Default");								//Make a threshold of the opened slice
+	}
+	wait(100);
+	run("Flatten");											//Flatten:Creates a new RGB image that has the overlay rendered as pixel data
+	run("8-bit");											//Turn the image into 8-bit
+	run("Restore Selection");									//Restore the selection of the ROI
+	setThreshold(0, 1); 										//Make a threshold
+	run("Analyze Particles...", "size=4-32 clear results add to manager"); 				//Analyze the particles (crosses) inside the ROI (size setted: 4-32 mm^2)
+	run("Input/Output...", "jpeg=85 gif=-1 file=.csv use_file");
+	if(i <= 9) {
+		title = "BlackGrid0" + i+ "-" + "1.tif";
+		selectWindow(title);
+		run("Close");
+	}
+	if (i > 9) {
+		title2 = "BlackGrid" + i + "-" + "1.tif";
+		selectWindow(title2);
+		run("Close");
+	}
+	wait(100);
+	setResult("Slice number", roiManager("count"), i);
+	roiManager("measure");										//Count the ROI Manager measure
+	if (roiManager("measure") == 0) {
+		waitForUser("ROI not defined");
+		ROIManager("delete");
+	} else {
+	wait(100);
+		slice = getResult("Slice", 1) +i;
+		setResult("Slice", 1, slice);
+		roiManager("measure");
+		wait(100);
+		numberOfPoints = roiManager("count");							//Count the number of points
+		for (k = 0; k < numberOfPoints; k++) {
+			xM = getResult("XM", k);							//Save points with their parameters
+			yM = getResult("YM", k);
+			name = getTitle; 
+			dotIndex = indexOf(name, "."); 
+			name = substring(name, 0, dotIndex); 
+		}
+		saveAs("Results", dir + name + ".csv"); 						//Save the results in a CSV (excel) file, for each slide
+		selectWindow("ROI Manager");
+		run("Close");
+		selectWindow("Results");
+		if(i <= 9) {
+			title3 = "BlackGrid0" + i + ".tif";
+			selectWindow(title3);
+			run("Close");
+		}
+		if (i > 9) {
+		title4 = "BlackGrid" + i + ".tif";
+		selectWindow(title4);
+		run("Close");
+	
+		}
+	}
+	
+}
+
+selectWindow("Results");
+run("Close");
+
+//RED-GRID IMAGE SEQUENCE OPENING
+selectWindow("BlackGrid");
+run("Close");
+
+list=getFileList(dir_red);										//Get the images from the RedGrid folder
+for(i=0;i<list.length;i++){
+	file= dir_red + list[i];
+	open(file);											//Open each RedGrid image
+}
+run("Images to Stack", "name=RedGrid");									//Turn RedGrid images in a stack
+
+//IMPORTING OF THE POINTS INTO ROIMANAGER FROM A .CSV FILE
+list = getFileList(path); 							
+fileName = dir_folders+"Measurements/";
+for(i=min_value;i<=max_value;i++){ 
+ if (i <= 9) {
+		setSlice(i);
+		run("ROI Manager...");
+		allText = File.openAsString(fileName + "BlackGrid0" + i + ".csv");			//Open the file excel as an entire string
+		text = split(allText, "\n");								//Split the text
+		iM = 0;
+		iX = 3; 
+		iY = 4;
+
+		for (k= 0; k < (text.length/3); k++){ 							//The length of the text is divided into three parts because there's the repetition for three times of the values
+//se il valore del punto è minore a 210 allora segna il punto (la croce)
+			line = split(text[k],",");
+			if (parseInt(line[iM]) <= 210) {						//If the value of the point is less than 210, it marks the point (cross)
+				makePoint(parseInt(line[iX]), parseInt(line[iY])); 
+				roiManager("Add");
+			}
+		}
+	} else {
+		setSlice(i);
+		run("ROI Manager...");
+		allText = File.openAsString(fileName + "BlackGrid" + i + ".csv");
+
+		text = split(allText, "\n");
+		iM = 0;
+		iX = 3; 
+		iY = 4;
+		for (k= 0; k < (text.length/3); k++){
+			line = split(text[k],",");
+			if (parseInt(line[iM]) <= 210) {
+				makePoint(parseInt(line[iX]), parseInt(line[iY])); 
+				roiManager("Add");
+			}
+		}
+	}
+}
+
+//RENAME POINTS
+nROIs=roiManager("count");										//Count the points in the ROI Manager
+for(i=1;i<=nROIs;i++){
+	roiManager("select",i-1);									//Rename each point(from 1)
+	roiManager("rename",i);
+}
+
+
+waitForUser("All measurements have been imported into the ROIManager");
+
+//to add points : t + click of mouse
+//to delete points : in ROIs manager click on Labels, on Red Grid click on wanted point and in ROIs Manager click delete
